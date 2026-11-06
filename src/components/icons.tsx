@@ -40,6 +40,33 @@ export function ChevronRightIcon({ className = "size-4" }: IconProps) {
   );
 }
 
+export function ChevronDownIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg {...baseProps(className)} strokeWidth={2}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+export function ArrowRightIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg {...baseProps(className)} strokeWidth={2}>
+      <path d="M5 12h14" />
+      <path d="m13 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+export function LogOutIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg {...baseProps(className)} strokeWidth={2}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <path d="m16 17 5-5-5-5" />
+      <path d="M21 12H9" />
+    </svg>
+  );
+}
+
 export function TrashIcon({ className = "size-4" }: IconProps) {
   return (
     <svg {...baseProps(className)} strokeWidth={2}>

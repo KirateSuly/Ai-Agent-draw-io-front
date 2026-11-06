@@ -13,12 +13,19 @@ import {
   DiagramIcon,
   DownloadIcon,
   FolderOpenIcon,
+  LogOutIcon,
   RefreshIcon,
   SaveIcon,
   TrashIcon,
 } from "@/src/components/icons";
+import { clearUserId } from "@/src/utils/cookie";
+import {
+  getDiagramViewBox,
+  type DiagramViewBox,
+} from "@/src/utils/drawio";
 
 const STORAGE_KEY = "drawio-demo-diagram";
+const DIAGRAM_VIEWBOX_PADDING = 24;
 
 /**
  * draw.io 官方嵌入地址。若所在网络无法访问 embed.diagrams.net，
@@ -63,8 +70,27 @@ const buttonClass =
 const dangerButtonClass =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent px-3 text-sm font-medium text-muted transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/40 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-300";
 
-export default function DrawIoEditor() {
+const iconButtonClass =
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40";
+
+interface DrawIoEditorProps {
+  userId: string;
+}
+
+type DrawioLoadPayload = {
+  xml: string;
+  fit?: number;
+  maxFitScale?: number;
+  viewbox?: DiagramViewBox;
+  border?: number;
+};
+
+type DrawioLoadAction = (payload: DrawioLoadPayload) => void;
+
+export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
   const drawioRef = useRef<DrawIoEmbedRef>(null);
+  const pendingDiagramRef = useRef<string | null>(null);
+  const lastSyncedDiagramRef = useRef<string | null>(null);
 
   const [xml, setXml] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
@@ -82,18 +108,84 @@ export default function DrawIoEditor() {
     return () => window.clearTimeout(timer);
   }, [isDrawioReady, editorKey]);
 
+  const loadDiagram = useCallback((diagramXml: string) => {
+    const target = drawioRef.current;
+    if (!target) {
+      return false;
+    }
+
+    const viewBox = getDiagramViewBox(diagramXml);
+    const paddedViewBox = viewBox
+      ? {
+          x: viewBox.x - DIAGRAM_VIEWBOX_PADDING,
+          y: viewBox.y - DIAGRAM_VIEWBOX_PADDING,
+          width: viewBox.width + DIAGRAM_VIEWBOX_PADDING * 2,
+          height: viewBox.height + DIAGRAM_VIEWBOX_PADDING * 2,
+        }
+      : null;
+
+    // react-drawio 未声明 draw.io load 动作的 viewbox/fit 参数，但会把额外字段原样转发。
+    (target.load as unknown as DrawioLoadAction)({
+      xml: diagramXml,
+      ...(paddedViewBox
+        ? { viewbox: paddedViewBox, border: 0 }
+        : { fit: 1, maxFitScale: 1 }),
+    });
+    return true;
+  }, []);
+
   const handleDrawioLoad = useCallback(() => {
     setIsDrawioReady(true);
     setShowLoadHelp(false);
+
+    const pendingXml = pendingDiagramRef.current;
+    if (pendingXml) {
+      loadDiagram(pendingXml);
+      pendingDiagramRef.current = null;
+      setStatus("已根据智能体回复更新图表");
+      return;
+    }
+
+    if (lastSyncedDiagramRef.current) {
+      setStatus("已根据智能体回复更新图表");
+      return;
+    }
+
     setStatus("编辑器加载完成，开始绘图吧");
-  }, []);
+  }, [loadDiagram]);
+
+  const handleApplyDiagram = useCallback(
+    (diagramXml: string) => {
+      setXml(diagramXml);
+      lastSyncedDiagramRef.current = diagramXml;
+      pendingDiagramRef.current = diagramXml;
+
+      if (isDrawioReady && loadDiagram(diagramXml)) {
+        pendingDiagramRef.current = null;
+        setStatus("已根据智能体回复更新图表");
+      } else {
+        setStatus("图表已生成，等待 draw.io 加载完成后同步…");
+      }
+    },
+    [isDrawioReady, loadDiagram],
+  );
 
   const handleRetryLoad = useCallback(() => {
     setShowLoadHelp(false);
     setIsDrawioReady(false);
+    if (xml) {
+      pendingDiagramRef.current = xml;
+    }
     setEditorKey((key) => key + 1);
     setStatus("正在重新加载 draw.io 编辑器…");
+  }, [xml]);
+
+  const handleLogout = useCallback(() => {
+    clearUserId();
+    window.location.replace("/login");
   }, []);
+
+  const userInitial = userId.trim().charAt(0).toUpperCase() || "U";
 
   const handleExport = useCallback((format: ExportFormat) => {
     setPreviewFormat(format);
@@ -129,6 +221,7 @@ export default function DrawIoEditor() {
       return;
     }
     setPreview(null);
+    lastSyncedDiagramRef.current = null;
     drawioRef.current?.load({ xml: saved });
     setStatus("已从 localStorage 加载图表");
   }, []);
@@ -136,6 +229,7 @@ export default function DrawIoEditor() {
   const handleClear = useCallback(() => {
     setPreview(null);
     setXml("");
+    lastSyncedDiagramRef.current = null;
     drawioRef.current?.load({ xml: "" });
     setStatus("已清空画布");
   }, []);
@@ -200,6 +294,30 @@ export default function DrawIoEditor() {
           >
             <TrashIcon className="size-4" />
             清空
+          </button>
+        </div>
+
+        <span className="hidden h-6 w-px bg-line sm:block" aria-hidden />
+        <div className="flex items-center gap-1.5">
+          <span
+            className="flex max-w-44 items-center gap-2 rounded-lg border border-line bg-surface-muted px-2 py-1.5"
+            title={`当前用户：${userId}`}
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand ring-1 ring-brand-border">
+              {userInitial}
+            </span>
+            <span className="hidden max-w-28 truncate text-xs font-medium text-muted-strong sm:block">
+              {userId}
+            </span>
+          </span>
+          <button
+            type="button"
+            className={iconButtonClass}
+            onClick={handleLogout}
+            aria-label="退出登录"
+            title="退出登录"
+          >
+            <LogOutIcon />
           </button>
         </div>
       </header>
@@ -294,7 +412,7 @@ export default function DrawIoEditor() {
           </aside>
         )}
 
-        <ChatPanel />
+        <ChatPanel userId={userId} onDiagram={handleApplyDiagram} />
       </main>
 
       <footer className="flex items-center gap-2 border-t border-line bg-surface/80 px-4 py-2 text-xs text-muted backdrop-blur-xl">

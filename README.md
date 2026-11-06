@@ -20,6 +20,16 @@ You can start editing the page by modifying `src/app`. The page auto-updates as 
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## draw.io 嵌入地址
+
+默认使用官方地址 `https://embed.diagrams.net`。如果所在网络无法访问该域名，可以自建 draw.io 服务并配置：
+
+```bash
+NEXT_PUBLIC_DRAWIO_BASE_URL=https://your-drawio-host
+```
+
+修改后需重启开发服务器。页面在加载超时后会显示提示和“重新加载”按钮。
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

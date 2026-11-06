@@ -9,6 +9,14 @@ import {
   type KeyboardEvent,
 } from "react";
 
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  SendIcon,
+  SparklesIcon,
+  TrashIcon,
+} from "@/src/components/icons";
+
 type MessageRole = "user" | "agent";
 
 interface ChatMessage {
@@ -43,106 +51,12 @@ function buildDemoReply(prompt: string): string {
 }
 
 const iconButtonClass =
-  "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100";
-
-type IconProps = {
-  className?: string;
-};
-
-function SparklesIcon({ className = "size-4" }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
-      <path d="M19 15.5v4M17 17.5h4" />
-    </svg>
-  );
-}
-
-function ChevronLeftIcon({ className = "size-4" }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="m15 18-6-6 6-6" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon({ className = "size-4" }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="m9 18 6-6-6-6" />
-    </svg>
-  );
-}
-
-function TrashIcon({ className = "size-4" }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6v14H5V6" />
-      <path d="M10 11v6M14 11v6" />
-    </svg>
-  );
-}
-
-function SendIcon({ className = "size-4" }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M22 2 11 13" />
-      <path d="M22 2 15 22l-4-9-9-4Z" />
-    </svg>
-  );
-}
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:opacity-40";
 
 function AgentAvatar({ size = "size-7" }: { size?: string }) {
   return (
     <span
-      className={`${size} flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm`}
+      className={`${size} flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_6px_14px_-8px_rgba(37,99,235,0.9)]`}
       aria-hidden="true"
     >
       <SparklesIcon className="size-3.5" />
@@ -155,13 +69,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   return (
     <div
-      className={`flex items-start gap-2 ${
+      className={`message-in flex items-start gap-2 ${
         isUser ? "flex-row-reverse" : "flex-row"
       }`}
     >
       {isUser ? (
         <span
-          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-700 dark:text-zinc-200"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand ring-1 ring-brand-border"
           aria-hidden="true"
         >
           我
@@ -172,8 +86,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div
         className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm leading-relaxed ${
           isUser
-            ? "rounded-tr-sm bg-blue-600 text-white dark:bg-blue-500"
-            : "rounded-tl-sm bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
+            ? "rounded-tr-sm bg-gradient-to-br from-brand-strong to-brand-hover text-white shadow-[0_10px_24px_-16px_rgba(37,99,235,0.95)]"
+            : "rounded-tl-sm bg-brand-soft text-foreground ring-1 ring-brand-border/70"
         }`}
       >
         {message.content}
@@ -184,16 +98,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 function TypingIndicator() {
   return (
-    <div className="flex items-start gap-2">
+    <div className="message-in flex items-start gap-2">
       <AgentAvatar />
       <div
-        className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-zinc-100 px-3 py-3 dark:bg-zinc-800"
+        className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-brand-soft px-3 py-3 ring-1 ring-brand-border/70"
         aria-hidden="true"
       >
         {[0, 150, 300].map((delay) => (
           <span
             key={delay}
-            className="size-1.5 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500"
+            className="size-1.5 animate-bounce rounded-full bg-brand/60"
             style={{ animationDelay: `${delay}ms` }}
           />
         ))}
@@ -297,10 +211,10 @@ export default function ChatPanel() {
     <aside
       id="ai-chat-panel"
       aria-label="AI 绘图助手对话"
-      className={`flex shrink-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition-[width] duration-300 ease-out dark:border-zinc-800 dark:bg-zinc-900 ${
+      className={`panel chat-panel flex shrink-0 flex-col overflow-hidden rounded-xl transition-[width] duration-300 ease-out ${
         collapsed
           ? "w-12"
-          : "w-[22rem] max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:w-[min(22rem,calc(100%-1rem))] max-lg:shadow-2xl"
+          : "w-[22rem] max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:w-[min(22rem,calc(100%-1rem))]"
       }`}
     >
       {collapsed ? (
@@ -311,29 +225,29 @@ export default function ChatPanel() {
           aria-controls="ai-chat-panel"
           aria-label="展开 AI 绘图助手对话"
           title="展开对话"
-          className="flex h-full w-full flex-col items-center justify-between gap-4 py-3 text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100"
+          className="flex h-full w-full flex-col items-center justify-between gap-4 bg-brand-softer py-3 text-brand transition-colors hover:bg-brand-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/40"
         >
           <ChevronLeftIcon className="size-4" />
-          <span className="text-[11px] font-medium tracking-[0.25em] [writing-mode:vertical-rl]">
+          <span className="text-[11px] font-medium tracking-[0.22em] [writing-mode:vertical-rl]">
             AI 对话
           </span>
-          <span className="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
+          <span className="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_6px_14px_-8px_rgba(37,99,235,0.9)]">
             <SparklesIcon className="size-3.5" />
           </span>
         </button>
       ) : (
         <div className="flex h-full min-h-0 flex-col">
-          <header className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
+          <header className="flex items-center gap-2.5 border-b border-line bg-gradient-to-r from-brand-softer via-surface to-surface px-3.5 py-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_8px_18px_-10px_rgba(37,99,235,0.9)]">
               <SparklesIcon className="size-4" />
             </span>
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              <h2 className="truncate text-sm font-semibold tracking-tight text-foreground">
                 AI 绘图助手
               </h2>
-              <p className="flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <p className="flex items-center gap-1.5 text-[11px] text-muted">
                 <span
-                  className="size-1.5 rounded-full bg-emerald-500"
+                  className="size-1.5 rounded-full bg-success"
                   aria-hidden="true"
                 />
                 在线 · 演示模式
@@ -367,7 +281,7 @@ export default function ChatPanel() {
             role="log"
             aria-live="polite"
             aria-label="对话消息"
-            className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3"
+            className="thin-scrollbar min-h-0 flex-1 space-y-3.5 overflow-y-auto px-3.5 py-4"
           >
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} />
@@ -379,13 +293,13 @@ export default function ChatPanel() {
           </div>
 
           <form
-            className="border-t border-zinc-200 p-3 dark:border-zinc-800"
+            className="border-t border-line bg-brand-softer/50 px-3.5 py-3"
             onSubmit={(event) => {
               event.preventDefault();
               handleSend();
             }}
           >
-            <div className="flex items-end gap-2 rounded-xl border border-zinc-200 bg-white p-1 transition-colors focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-950">
+            <div className="flex items-end gap-2 rounded-xl border border-line bg-surface p-1.5 shadow-sm transition-all focus-within:border-brand-border focus-within:ring-4 focus-within:ring-brand/10">
               <textarea
                 ref={textareaRef}
                 rows={1}
@@ -394,20 +308,20 @@ export default function ChatPanel() {
                 onKeyDown={handleKeyDown}
                 placeholder="描述你想画的图表…"
                 aria-label="输入消息"
-                className="max-h-32 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-zinc-800 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                className="max-h-32 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted/70"
               />
               <button
                 type="submit"
                 disabled={!draft.trim() || pending}
                 aria-label="发送消息"
                 title="发送"
-                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 dark:focus-visible:ring-offset-zinc-900"
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-strong text-white shadow-[0_8px_18px_-10px_rgba(37,99,235,0.9)] transition-all hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line disabled:text-muted disabled:shadow-none"
               >
                 <SendIcon className="size-4" />
               </button>
             </div>
-            <p className="mt-1.5 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
-              Enter 发送 · Shift + Enter 换行 · 当前为前端演示
+            <p className="mt-2 text-center text-[11px] text-muted/80">
+              Enter 发送 · Shift + Enter 换行
             </p>
           </form>
         </div>

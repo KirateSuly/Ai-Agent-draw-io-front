@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DrawIoEmbed,
   type DrawIoEmbedRef,
@@ -9,8 +9,22 @@ import {
 } from "react-drawio";
 
 import ChatPanel from "@/src/components/chat-panel";
+import {
+  DiagramIcon,
+  DownloadIcon,
+  FolderOpenIcon,
+  RefreshIcon,
+  SaveIcon,
+  TrashIcon,
+} from "@/src/components/icons";
 
 const STORAGE_KEY = "drawio-demo-diagram";
+
+/**
+ * draw.io 官方嵌入地址。若所在网络无法访问 embed.diagrams.net，
+ * 可自建 draw.io 服务并通过 NEXT_PUBLIC_DRAWIO_BASE_URL 指向它。
+ */
+const DRAWIO_BASE_URL = process.env.NEXT_PUBLIC_DRAWIO_BASE_URL;
 
 /**
  * draw.io 格式面板里的按钮（更改、编辑数据、清除默认风格等）没有显式设置字号，
@@ -40,8 +54,14 @@ const DRAWIO_UI_CSS = `
 
 type ExportFormat = "xmlsvg" | "png";
 
+const primaryButtonClass =
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-brand-strong px-3.5 text-sm font-medium text-white shadow-[0_10px_22px_-12px_rgba(37,99,235,0.9)] transition-all hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50";
+
 const buttonClass =
-  "inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700";
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-muted-strong transition-all hover:border-brand-border hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50";
+
+const dangerButtonClass =
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent px-3 text-sm font-medium text-muted transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/40 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-300";
 
 export default function DrawIoEditor() {
   const drawioRef = useRef<DrawIoEmbedRef>(null);
@@ -50,6 +70,30 @@ export default function DrawIoEditor() {
   const [preview, setPreview] = useState<string | null>(null);
   const [previewFormat, setPreviewFormat] = useState<ExportFormat>("xmlsvg");
   const [status, setStatus] = useState("正在加载 draw.io 编辑器…");
+  const [isDrawioReady, setIsDrawioReady] = useState(false);
+  const [showLoadHelp, setShowLoadHelp] = useState(false);
+  const [editorKey, setEditorKey] = useState(0);
+
+  useEffect(() => {
+    if (isDrawioReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => setShowLoadHelp(true), 12000);
+    return () => window.clearTimeout(timer);
+  }, [isDrawioReady, editorKey]);
+
+  const handleDrawioLoad = useCallback(() => {
+    setIsDrawioReady(true);
+    setShowLoadHelp(false);
+    setStatus("编辑器加载完成，开始绘图吧");
+  }, []);
+
+  const handleRetryLoad = useCallback(() => {
+    setShowLoadHelp(false);
+    setIsDrawioReady(false);
+    setEditorKey((key) => key + 1);
+    setStatus("正在重新加载 draw.io 编辑器…");
+  }, []);
 
   const handleExport = useCallback((format: ExportFormat) => {
     setPreviewFormat(format);
@@ -96,41 +140,76 @@ export default function DrawIoEditor() {
     setStatus("已清空画布");
   }, []);
 
+  const isBusy = status.includes("正在");
+
   return (
-    <div className="flex h-dvh flex-col bg-zinc-50 dark:bg-zinc-950">
-      <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-        <h1 className="mr-auto text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          Draw.io 编辑器
-        </h1>
-        <button
-          type="button"
-          className={buttonClass}
-          onClick={() => handleExport("xmlsvg")}
-        >
-          导出 SVG
-        </button>
-        <button
-          type="button"
-          className={buttonClass}
-          onClick={() => handleExport("png")}
-        >
-          导出 PNG
-        </button>
-        <button type="button" className={buttonClass} onClick={handleSaveLocal}>
-          保存
-        </button>
-        <button type="button" className={buttonClass} onClick={handleLoadLocal}>
-          加载
-        </button>
-        <button type="button" className={buttonClass} onClick={handleClear}>
-          清空
-        </button>
+    <div className="flex h-dvh flex-col text-foreground">
+      <header className="flex flex-wrap items-center gap-3 border-b border-line bg-surface/80 px-4 py-3 backdrop-blur-xl">
+        <div className="mr-auto flex min-w-0 items-center gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_10px_22px_-10px_rgba(37,99,235,0.85)]">
+            <DiagramIcon className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold tracking-tight text-foreground">
+              Draw.io 编辑器
+            </h1>
+            <p className="hidden text-[11px] text-muted sm:block">
+              AI 驱动的在线绘图工作台
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={primaryButtonClass}
+            onClick={() => handleExport("xmlsvg")}
+          >
+            <DownloadIcon className="size-4" />
+            导出 SVG
+          </button>
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={() => handleExport("png")}
+          >
+            <DownloadIcon className="size-4" />
+            导出 PNG
+          </button>
+          <span className="mx-1 hidden h-6 w-px bg-line sm:block" aria-hidden />
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={handleSaveLocal}
+          >
+            <SaveIcon className="size-4" />
+            保存
+          </button>
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={handleLoadLocal}
+          >
+            <FolderOpenIcon className="size-4" />
+            加载
+          </button>
+          <button
+            type="button"
+            className={dangerButtonClass}
+            onClick={handleClear}
+          >
+            <TrashIcon className="size-4" />
+            清空
+          </button>
+        </div>
       </header>
 
-      <main className="relative flex min-h-0 flex-1 gap-3 p-3">
-        <div className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-800">
+      <main className="relative flex min-h-0 flex-1 gap-3 p-3 sm:gap-4 sm:p-4">
+        <div className="panel relative min-w-0 flex-1 overflow-hidden rounded-xl">
           <DrawIoEmbed
+            key={editorKey}
             ref={drawioRef}
+            baseUrl={DRAWIO_BASE_URL}
             autosave
             configuration={{ css: DRAWIO_UI_CSS }}
             urlParameters={{
@@ -140,7 +219,7 @@ export default function DrawIoEditor() {
               saveAndExit: false,
               lang: "zh",
             }}
-            onLoad={() => setStatus("编辑器加载完成，开始绘图吧")}
+            onLoad={handleDrawioLoad}
             onAutoSave={handleAutoSave}
             onExport={handleExported}
             onClose={(data) =>
@@ -149,23 +228,62 @@ export default function DrawIoEditor() {
               )
             }
           />
+
+          {showLoadHelp && (
+            <div
+              aria-live="polite"
+              className="absolute inset-0 z-10 flex items-center justify-center bg-surface/95 p-6 backdrop-blur-sm"
+            >
+              <div className="flex max-w-md flex-col items-center text-center">
+                <span className="flex size-12 items-center justify-center rounded-2xl bg-brand-soft text-brand ring-1 ring-brand-border">
+                  <DiagramIcon className="size-6" />
+                </span>
+                <h2 className="mt-4 text-sm font-semibold text-foreground">
+                  draw.io 编辑器加载时间较长
+                </h2>
+                <p className="mt-1.5 break-words text-xs leading-relaxed text-muted">
+                  请确认当前网络可以访问
+                  <span className="mx-1 font-mono text-[11px] text-muted-strong">
+                    embed.diagrams.net
+                  </span>
+                  后重试。内网环境可通过
+                  <span className="mx-1 font-mono text-[11px] text-muted-strong">
+                    NEXT_PUBLIC_DRAWIO_BASE_URL
+                  </span>
+                  配置自建的 draw.io 服务。
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRetryLoad}
+                  className={`${primaryButtonClass} mt-4`}
+                >
+                  <RefreshIcon className="size-4" />
+                  重新加载
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {preview && (
-          <aside className="hidden w-80 shrink-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm lg:flex dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                导出预览（{previewFormat === "png" ? "PNG" : "SVG"}）
+          <aside className="panel hidden w-80 shrink-0 flex-col overflow-hidden rounded-xl lg:flex">
+            <div className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+              <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <DownloadIcon className="size-4 text-brand" />
+                导出预览
+                <span className="rounded-md bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-brand">
+                  {previewFormat === "png" ? "PNG" : "SVG"}
+                </span>
               </span>
               <button
                 type="button"
-                className="text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                className="rounded-md px-2 py-1 text-xs font-medium text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
                 onClick={() => setPreview(null)}
               >
                 关闭
               </button>
             </div>
-            <div className="flex flex-1 items-center justify-center overflow-auto bg-[repeating-conic-gradient(#f4f4f5_0%_25%,#ffffff_0%_50%)] bg-[length:16px_16px] p-3 dark:bg-none dark:bg-zinc-950">
+            <div className="thin-scrollbar flex flex-1 items-center justify-center overflow-auto bg-[repeating-conic-gradient(#eaf2fd_0%_25%,#ffffff_0%_50%)] bg-[length:16px_16px] p-3 dark:bg-none dark:bg-surface-muted">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={preview}
@@ -179,8 +297,14 @@ export default function DrawIoEditor() {
         <ChatPanel />
       </main>
 
-      <footer className="border-t border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-        {status}
+      <footer className="flex items-center gap-2 border-t border-line bg-surface/80 px-4 py-2 text-xs text-muted backdrop-blur-xl">
+        <span
+          className={`size-1.5 shrink-0 rounded-full ${
+            isBusy ? "animate-pulse bg-brand" : "bg-success"
+          }`}
+          aria-hidden="true"
+        />
+        <span className="truncate">{status}</span>
       </footer>
     </div>
   );

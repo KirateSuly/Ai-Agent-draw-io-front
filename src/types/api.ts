@@ -31,7 +31,14 @@ export interface ChatRequest {
   message: string;
 }
 
-/** 对话响应；content 为智能体完整回复 */
+/** 对话响应类型：user 为补充信息对话，drawio 为可渲染的 draw.io XML */
+export type ChatResponseType = "user" | "drawio";
+
+/** 对话响应；type 决定前端展示方式，content 为完整内容 */
 export interface ChatResponse {
+  type?: ChatResponseType;
   content: string;
+  /** 兼容 user/drawio 双字段形式 */
+  user?: string;
+  drawio?: string;
 }

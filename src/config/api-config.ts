@@ -13,13 +13,14 @@ export const API_CONFIG = {
   timeouts: {
     agents: 10_000,
     session: 15_000,
-    chat: 180_000,
+    chat: 300_000,
   },
   cookieKeys: {
     userId: "ai_agent_drawio.userId",
   },
   storageKeys: {
     agentId: "ai_agent_drawio.agentId",
+    conversations: "ai_agent_drawio.conversations",
   },
   ui: {
     maxInputLength: 4000,

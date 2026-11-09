@@ -26,24 +26,24 @@ import {
 } from "@/src/components/icons";
 import { API_CONFIG } from "@/src/config/api-config";
 import type { AgentConfig } from "@/src/types/api";
-import { extractDrawioXml } from "@/src/utils/drawio";
+import type {
+  ConversationBookmark,
+  ConversationMessage,
+} from "@/src/types/conversation";
+import { normalizeChatResponse } from "@/src/utils/chat-response";
 
-type MessageRole = "user" | "agent";
 type AgentsStatus = "loading" | "ready" | "error";
 type SessionStatus = "idle" | "creating" | "ready" | "error";
-
-interface ChatMessage {
-  id: string;
-  role: MessageRole;
-  content: string;
-  status?: "done" | "error";
-  diagramXml?: string;
-  retryText?: string;
-}
+type ChatMessage = ConversationMessage;
 
 interface ChatPanelProps {
   userId: string;
+  conversation: ConversationBookmark;
+  onUpdateConversation: (
+    updater: (conversation: ConversationBookmark) => ConversationBookmark,
+  ) => void;
   onDiagram: (xml: string) => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 const WELCOME_MESSAGE_ID = "welcome";
@@ -54,7 +54,7 @@ let messageSequence = 0;
 
 function createMessageId(): string {
   messageSequence += 1;
-  return `chat-message-${messageSequence}`;
+  return `chat-message-${Date.now()}-${messageSequence}`;
 }
 
 function makeWelcomeMessage(agentName?: string): ChatMessage {
@@ -152,6 +152,13 @@ function MessageBubble({
               : "rounded-tl-sm bg-brand-soft text-foreground ring-1 ring-brand-border/70"
         }`}
       >
+        {message.needsInput ? (
+          <span className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-surface/70 px-1.5 py-0.5 text-[10px] font-medium text-brand ring-1 ring-brand-border">
+            <span className="size-1 rounded-full bg-brand" aria-hidden="true" />
+            需要补充信息
+          </span>
+        ) : null}
+
         <div className="whitespace-pre-wrap break-words">{message.content}</div>
 
         {message.diagramXml ? (
@@ -193,25 +200,29 @@ function TypingIndicator() {
   );
 }
 
-export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
+export default function ChatPanel({
+  userId,
+  conversation,
+  onUpdateConversation,
+  onDiagram,
+  onBusyChange,
+}: ChatPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [
-    makeWelcomeMessage(),
-  ]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
 
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [agentsStatus, setAgentsStatus] = useState<AgentsStatus>("loading");
   const [agentsError, setAgentsError] = useState("");
-  const [agentId, setAgentId] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
 
   const sendingRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const messages = conversation.messages;
+  const sessionId = conversation.sessionId;
+  const agentId = conversation.agentId;
   const userInitial = userId.trim().charAt(0).toUpperCase() || "我";
   const currentAgent =
     agents.find((agent) => agent.agentId === agentId) ?? null;
@@ -224,6 +235,29 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
     }
   }, []);
 
+  const setMessages = useCallback(
+    (updater: (previous: ChatMessage[]) => ChatMessage[]) => {
+      onUpdateConversation((current) => {
+        const nextMessages = updater(current.messages);
+        return nextMessages === current.messages
+          ? current
+          : { ...current, messages: nextMessages };
+      });
+    },
+    [onUpdateConversation],
+  );
+
+  const setSessionId = useCallback(
+    (nextSessionId: string | null) => {
+      onUpdateConversation((current) =>
+        current.sessionId === nextSessionId
+          ? current
+          : { ...current, sessionId: nextSessionId },
+      );
+    },
+    [onUpdateConversation],
+  );
+
   const loadAgents = useCallback(async () => {
     setAgentsStatus("loading");
     setAgentsError("");
@@ -233,28 +267,15 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
 
       if (!list.length) {
         setAgents([]);
-        setAgentId("");
         setAgentsStatus("error");
         setAgentsError("后端暂无可用智能体，请检查服务端配置。");
         return;
       }
 
-      const storedAgentId = readStoredAgentId();
-      const selected =
-        list.find((agent) => agent.agentId === storedAgentId) ?? list[0];
-
       setAgents(list);
-      setAgentId(selected.agentId);
-      storeAgentId(selected.agentId);
       setAgentsStatus("ready");
-      setMessages((previous) =>
-        previous.length === 1 && previous[0].id === WELCOME_MESSAGE_ID
-          ? [makeWelcomeMessage(selected.agentName)]
-          : previous,
-      );
     } catch (error) {
       setAgents([]);
-      setAgentId("");
       setAgentsStatus("error");
       setAgentsError(getErrorMessage(error));
     }
@@ -264,12 +285,54 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
     void loadAgents();
   }, [loadAgents]);
 
+  /** 当前书签没有有效智能体时，自动选择上次使用的智能体 */
+  useEffect(() => {
+    if (agentsStatus !== "ready" || !agents.length) {
+      return;
+    }
+
+    const current = agents.find((agent) => agent.agentId === agentId);
+    if (current) {
+      storeAgentId(current.agentId);
+      return;
+    }
+
+    const storedAgentId = readStoredAgentId();
+    const selected =
+      agents.find((agent) => agent.agentId === storedAgentId) ?? agents[0];
+
+    onUpdateConversation((previous) => ({
+      ...previous,
+      agentId: selected.agentId,
+      sessionId:
+        previous.agentId === selected.agentId ? previous.sessionId : null,
+    }));
+    storeAgentId(selected.agentId);
+  }, [
+    agents,
+    agentsStatus,
+    agentId,
+    conversation.id,
+    onUpdateConversation,
+  ]);
+
+  useEffect(() => {
+    setSessionStatus(sessionId ? "ready" : "idle");
+  }, [conversation.id, sessionId]);
+
+  /** 切换书签时清理仅在当前页面有效的输入草稿 */
+  useEffect(() => {
+    setDraft("");
+    setPending(false);
+    resetTextareaHeight();
+  }, [conversation.id, resetTextareaHeight]);
+
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (container) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, pending, collapsed, agentsStatus]);
+  }, [messages, pending, collapsed, agentsStatus, conversation.id]);
 
   const submitMessage = useCallback(
     async (rawText: string, options: { appendUser?: boolean } = {}) => {
@@ -287,6 +350,7 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
 
       sendingRef.current = true;
       setPending(true);
+      onBusyChange?.(true);
 
       if (options.appendUser !== false) {
         setMessages((previous) => [
@@ -323,10 +387,27 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
           message: content,
         });
 
-        const reply = String(response?.content ?? "").trim();
-        const diagramXml = extractDrawioXml(reply);
+        const normalized = normalizeChatResponse(response);
+        const reply = normalized.content;
 
-        if (diagramXml) {
+        if (normalized.type === "drawio") {
+          const diagramXml = normalized.diagramXml;
+
+          if (!diagramXml) {
+            setMessages((previous) => [
+              ...previous,
+              {
+                id: createMessageId(),
+                role: "agent",
+                status: "error",
+                content:
+                  "后端返回了 drawio 类型的内容，但无法解析为有效的 draw.io XML，请重试。",
+                retryText: content,
+              },
+            ]);
+            return;
+          }
+
           onDiagram(diagramXml);
           setMessages((previous) => [
             ...previous,
@@ -337,16 +418,21 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
               diagramXml,
             },
           ]);
-        } else {
-          setMessages((previous) => [
-            ...previous,
-            {
-              id: createMessageId(),
-              role: "agent",
-              content: reply || "（智能体没有返回内容）",
-            },
-          ]);
+          return;
         }
+
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: createMessageId(),
+            role: "agent",
+            content: reply || "请补充更多信息，以便继续生成图表。",
+            needsInput: true,
+          },
+        ]);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+        });
       } catch (error) {
         setMessages((previous) => [
           ...previous,
@@ -361,9 +447,20 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
       } finally {
         sendingRef.current = false;
         setPending(false);
+        onBusyChange?.(false);
       }
     },
-    [agentId, agentsStatus, onDiagram, resetTextareaHeight, sessionId, userId],
+    [
+      agentId,
+      agentsStatus,
+      onBusyChange,
+      onDiagram,
+      resetTextareaHeight,
+      sessionId,
+      setMessages,
+      setSessionId,
+      userId,
+    ],
   );
 
   const handleSend = useCallback(() => {
@@ -380,7 +477,7 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
       );
       void submitMessage(message.retryText, { appendUser: false });
     },
-    [submitMessage],
+    [setMessages, submitMessage],
   );
 
   const handleDraftChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
@@ -413,11 +510,14 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
       return;
     }
 
-    setAgentId(nextAgentId);
     storeAgentId(nextAgentId);
-    setSessionId(null);
+    onUpdateConversation((previous) => ({
+      ...previous,
+      agentId: nextAgentId,
+      sessionId: null,
+      messages: [],
+    }));
     setSessionStatus("idle");
-    setMessages([makeWelcomeMessage(nextAgent.agentName)]);
     setDraft("");
     resetTextareaHeight();
     textareaRef.current?.focus();
@@ -427,14 +527,18 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
     if (pending) {
       return;
     }
-    setMessages([makeWelcomeMessage(agentName)]);
-    setSessionId(null);
+
+    onUpdateConversation((previous) => ({
+      ...previous,
+      messages: [],
+      sessionId: null,
+    }));
     setSessionStatus("idle");
     setDraft("");
     resetTextareaHeight();
-  }, [agentName, pending, resetTextareaHeight]);
+  }, [onUpdateConversation, pending, resetTextareaHeight]);
 
-  const canClear = messages.length > 1 || draft.length > 0;
+  const canClear = messages.length > 0 || draft.length > 0;
 
   const sessionLabel = (() => {
     if (agentsStatus === "loading") {
@@ -464,12 +568,18 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
           ? "bg-success"
           : "bg-muted/50";
 
+  const awaitingInput = messages[messages.length - 1]?.needsInput === true;
+  const displayMessages =
+    messages.length > 0 ? messages : [makeWelcomeMessage(agentName)];
+
   const textareaPlaceholder =
     agentsStatus === "loading"
       ? "正在连接智能体…"
       : agentsStatus === "error"
         ? "智能体不可用，请先重试"
-        : "描述你想画的图表…";
+        : awaitingInput
+          ? "补充信息，继续生成图表…"
+          : "描述你想画的图表…";
 
   return (
     <aside
@@ -478,7 +588,7 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
       className={`panel chat-panel flex shrink-0 flex-col overflow-hidden rounded-xl transition-[width] duration-300 ease-out ${
         collapsed
           ? "w-12"
-          : "w-[22rem] max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:w-[min(22rem,calc(100%-1rem))]"
+          : "w-80 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:w-[min(20rem,calc(100%-1rem))]"
       }`}
     >
       {collapsed ? (
@@ -615,7 +725,7 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
               </div>
             ) : null}
 
-            {messages.map((message) => (
+            {displayMessages.map((message) => (
               <MessageBubble
                 key={message.id}
                 message={message}
@@ -638,6 +748,12 @@ export default function ChatPanel({ userId, onDiagram }: ChatPanelProps) {
               handleSend();
             }}
           >
+            {awaitingInput ? (
+              <div className="message-in mb-2 flex items-start gap-2 rounded-lg border border-brand-border/70 bg-brand-soft px-2.5 py-1.5 text-[11px] leading-relaxed text-brand">
+                <SparklesIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>请根据上方提示补充信息，发送后继续生成图表。</span>
+              </div>
+            ) : null}
             <div className="flex items-end gap-2 rounded-xl border border-line bg-surface p-1.5 shadow-sm transition-all focus-within:border-brand-border focus-within:ring-4 focus-within:ring-brand/10">
               <textarea
                 ref={textareaRef}

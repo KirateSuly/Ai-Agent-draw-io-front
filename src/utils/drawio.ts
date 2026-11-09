@@ -1,8 +1,8 @@
 /**
- * 从智能体回复中提取 draw.io XML。
+ * 从一段文本中提取 draw.io XML。
  * 提示词要求只输出 XML，但模型仍可能包一层 Markdown 代码块或补充说明，这里做兼容。
  */
-export function extractDrawioXml(content: string): string | null {
+function extractFromText(content: string): string | null {
   if (!content) {
     return null;
   }
@@ -36,6 +36,23 @@ export function extractDrawioXml(content: string): string | null {
   }
 
   return null;
+}
+
+export function extractDrawioXml(content: string): string | null {
+  const direct = extractFromText(content);
+  if (direct) {
+    return direct;
+  }
+
+  // 兼容 XML 被 HTML 转义后返回的情况，例如 &lt;mxGraphModel ...&gt;
+  const decoded = content
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+
+  return decoded !== content ? extractFromText(decoded) : null;
 }
 
 export interface DiagramViewBox {

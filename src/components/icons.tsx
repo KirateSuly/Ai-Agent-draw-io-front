@@ -78,11 +78,37 @@ export function TrashIcon({ className = "size-4" }: IconProps) {
   );
 }
 
+export function PencilIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg {...baseProps(className)} strokeWidth={2}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
 export function SendIcon({ className = "size-4" }: IconProps) {
   return (
     <svg {...baseProps(className)} strokeWidth={2}>
       <path d="M22 2 11 13" />
       <path d="M22 2 15 22l-4-9-9-4Z" />
+    </svg>
+  );
+}
+
+export function ChatIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg {...baseProps(className)} strokeWidth={2}>
+      <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+    </svg>
+  );
+}
+
+export function PlusIcon({ className = "size-4" }: IconProps) {
+  return (
+    <svg {...baseProps(className)} strokeWidth={2}>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
     </svg>
   );
 }

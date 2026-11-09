@@ -9,22 +9,29 @@ import {
 } from "react-drawio";
 
 import ChatPanel from "@/src/components/chat-panel";
+import ConversationSidebar from "@/src/components/conversation-sidebar";
 import {
+  ChatIcon,
+  ChevronRightIcon,
   DiagramIcon,
   DownloadIcon,
-  FolderOpenIcon,
   LogOutIcon,
   RefreshIcon,
-  SaveIcon,
-  TrashIcon,
 } from "@/src/components/icons";
+import type { ConversationBookmark } from "@/src/types/conversation";
+import {
+  createBlankConversation,
+  deriveConversationTitle,
+  loadConversationStore,
+  saveConversationStore,
+  sortConversationsByUpdatedAt,
+} from "@/src/utils/conversation-storage";
 import { clearUserId } from "@/src/utils/cookie";
 import {
   getDiagramViewBox,
   type DiagramViewBox,
 } from "@/src/utils/drawio";
 
-const STORAGE_KEY = "drawio-demo-diagram";
 const DIAGRAM_VIEWBOX_PADDING = 24;
 
 /**
@@ -62,16 +69,13 @@ const DRAWIO_UI_CSS = `
 type ExportFormat = "xmlsvg" | "png";
 
 const primaryButtonClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-brand-strong px-3.5 text-sm font-medium text-white shadow-[0_10px_22px_-12px_rgba(37,99,235,0.9)] transition-all hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-brand-strong px-3 text-xs font-medium text-white shadow-[0_10px_22px_-12px_rgba(37,99,235,0.9)] transition-all hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50";
 
 const buttonClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-muted-strong transition-all hover:border-brand-border hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50";
-
-const dangerButtonClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent px-3 text-sm font-medium text-muted transition-all hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/40 dark:hover:border-rose-500/30 dark:hover:bg-rose-500/10 dark:hover:text-rose-300";
+  "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-xs font-medium text-muted-strong transition-all hover:border-brand-border hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50";
 
 const iconButtonClass =
-  "inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40";
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40";
 
 interface DrawIoEditorProps {
   userId: string;
@@ -89,24 +93,33 @@ type DrawioLoadAction = (payload: DrawioLoadPayload) => void;
 
 export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
   const drawioRef = useRef<DrawIoEmbedRef>(null);
-  const pendingDiagramRef = useRef<string | null>(null);
-  const lastSyncedDiagramRef = useRef<string | null>(null);
+  const drawioReadyRef = useRef(false);
+  const activeConversationRef = useRef<ConversationBookmark | null>(null);
+  const suppressAutoSaveRef = useRef(true);
+  const suppressAutoSaveTimerRef = useRef<number | null>(null);
 
-  const [xml, setXml] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [previewFormat, setPreviewFormat] = useState<ExportFormat>("xmlsvg");
-  const [status, setStatus] = useState("正在加载 draw.io 编辑器…");
   const [isDrawioReady, setIsDrawioReady] = useState(false);
   const [showLoadHelp, setShowLoadHelp] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
+  const [showConversationList, setShowConversationList] = useState(true);
+
+  const [conversations, setConversations] = useState<ConversationBookmark[]>(
+    [],
+  );
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [storeReady, setStoreReady] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
+
+  const activeConversation =
+    conversations.find(
+      (conversation) => conversation.id === activeConversationId,
+    ) ?? null;
 
   useEffect(() => {
-    if (isDrawioReady) {
-      return;
-    }
-    const timer = window.setTimeout(() => setShowLoadHelp(true), 12000);
-    return () => window.clearTimeout(timer);
-  }, [isDrawioReady, editorKey]);
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
 
   const loadDiagram = useCallback((diagramXml: string) => {
     const target = drawioRef.current;
@@ -134,51 +147,179 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
     return true;
   }, []);
 
+  const updateConversationById = useCallback(
+    (
+      conversationId: string,
+      updater: (
+        conversation: ConversationBookmark,
+      ) => ConversationBookmark,
+    ) => {
+      setConversations((previous) => {
+        const target = previous.find(
+          (conversation) => conversation.id === conversationId,
+        );
+        if (!target) {
+          return previous;
+        }
+
+        const updated = updater(target);
+        if (updated === target) {
+          return previous;
+        }
+
+        const nextTitle = updated.isTitleCustom
+          ? updated.title.trim() || "新对话"
+          : deriveConversationTitle(updated.messages);
+        const nextConversation: ConversationBookmark = {
+          ...updated,
+          title: nextTitle,
+          updatedAt: Math.max(Date.now(), target.updatedAt + 1),
+        };
+
+        // 最近更新的书签移动到最上面
+        return [
+          nextConversation,
+          ...previous.filter(
+            (conversation) => conversation.id !== conversationId,
+          ),
+        ];
+      });
+    },
+    [],
+  );
+
+  const updateActiveConversation = useCallback(
+    (
+      updater: (
+        conversation: ConversationBookmark,
+      ) => ConversationBookmark,
+    ) => {
+      if (!activeConversationId) {
+        return;
+      }
+      updateConversationById(activeConversationId, updater);
+    },
+    [activeConversationId, updateConversationById],
+  );
+
+  /** 程序化加载画布时，忽略 draw.io 回传的自动保存，避免误改“最后修改时间” */
+  const markProgrammaticLoad = useCallback(() => {
+    suppressAutoSaveRef.current = true;
+    if (suppressAutoSaveTimerRef.current !== null) {
+      window.clearTimeout(suppressAutoSaveTimerRef.current);
+    }
+    suppressAutoSaveTimerRef.current = window.setTimeout(() => {
+      suppressAutoSaveRef.current = false;
+      suppressAutoSaveTimerRef.current = null;
+    }, 1000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (suppressAutoSaveTimerRef.current !== null) {
+        window.clearTimeout(suppressAutoSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  /** 初始化：读取当前用户的书签，没有则创建第一个空白对话 */
+  useEffect(() => {
+    const stored = loadConversationStore(userId);
+    const nextConversations = stored.conversations.length
+      ? stored.conversations
+      : [createBlankConversation()];
+    const sorted = sortConversationsByUpdatedAt(nextConversations);
+    const current =
+      sorted.find(
+        (conversation) => conversation.id === stored.activeConversationId,
+      ) ?? sorted[0];
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage 只能在客户端挂载后读取一次
+    setConversations(sorted);
+    setActiveConversationId(current.id);
+    setStoreReady(true);
+  }, [userId]);
+
+  /** 对话内容、当前书签和全部画布 XML 一起防抖写入浏览器 */
+  useEffect(() => {
+    if (!storeReady) {
+      return;
+    }
+
+    const persist = () => {
+      saveConversationStore(userId, {
+        version: 1,
+        activeConversationId: activeConversationId || null,
+        conversations,
+      });
+    };
+    const timer = window.setTimeout(persist, 300);
+
+    window.addEventListener("pagehide", persist);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pagehide", persist);
+    };
+  }, [userId, storeReady, activeConversationId, conversations]);
+
+  useEffect(() => {
+    if (isDrawioReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => setShowLoadHelp(true), 12000);
+    return () => window.clearTimeout(timer);
+  }, [isDrawioReady, editorKey]);
+
+  /** 切换书签、重载编辑器后，把当前书签对应的画布恢复到 draw.io */
+  useEffect(() => {
+    if (!storeReady || !isDrawioReady) {
+      return;
+    }
+
+    const conversation = activeConversationRef.current;
+    if (!conversation) {
+      return;
+    }
+
+    const diagramXml = conversation.diagramXml || "";
+    markProgrammaticLoad();
+    loadDiagram(diagramXml);
+  }, [
+    activeConversationId,
+    isDrawioReady,
+    storeReady,
+    loadDiagram,
+    markProgrammaticLoad,
+  ]);
+
   const handleDrawioLoad = useCallback(() => {
+    drawioReadyRef.current = true;
     setIsDrawioReady(true);
     setShowLoadHelp(false);
+  }, []);
 
-    const pendingXml = pendingDiagramRef.current;
-    if (pendingXml) {
-      loadDiagram(pendingXml);
-      pendingDiagramRef.current = null;
-      setStatus("已根据智能体回复更新图表");
-      return;
-    }
-
-    if (lastSyncedDiagramRef.current) {
-      setStatus("已根据智能体回复更新图表");
-      return;
-    }
-
-    setStatus("编辑器加载完成，开始绘图吧");
-  }, [loadDiagram]);
+  const handleRetryLoad = useCallback(() => {
+    drawioReadyRef.current = false;
+    setShowLoadHelp(false);
+    setIsDrawioReady(false);
+    setEditorKey((key) => key + 1);
+  }, []);
 
   const handleApplyDiagram = useCallback(
     (diagramXml: string) => {
-      setXml(diagramXml);
-      lastSyncedDiagramRef.current = diagramXml;
-      pendingDiagramRef.current = diagramXml;
+      updateActiveConversation((conversation) =>
+        conversation.diagramXml === diagramXml
+          ? conversation
+          : { ...conversation, diagramXml },
+      );
 
-      if (isDrawioReady && loadDiagram(diagramXml)) {
-        pendingDiagramRef.current = null;
-        setStatus("已根据智能体回复更新图表");
-      } else {
-        setStatus("图表已生成，等待 draw.io 加载完成后同步…");
+      if (drawioReadyRef.current) {
+        markProgrammaticLoad();
+        loadDiagram(diagramXml);
       }
     },
-    [isDrawioReady, loadDiagram],
+    [loadDiagram, markProgrammaticLoad, updateActiveConversation],
   );
-
-  const handleRetryLoad = useCallback(() => {
-    setShowLoadHelp(false);
-    setIsDrawioReady(false);
-    if (xml) {
-      pendingDiagramRef.current = xml;
-    }
-    setEditorKey((key) => key + 1);
-    setStatus("正在重新加载 draw.io 编辑器…");
-  }, [xml]);
 
   const handleLogout = useCallback(() => {
     clearUserId();
@@ -190,64 +331,136 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
   const handleExport = useCallback((format: ExportFormat) => {
     setPreviewFormat(format);
     drawioRef.current?.exportDiagram({ format });
-    setStatus(`正在导出 ${format === "png" ? "PNG" : "SVG"}…`);
   }, []);
 
   const handleExported = useCallback((data: EventExport) => {
     setPreview(data.data);
-    if (data.xml) {
-      setXml(data.xml);
-    }
-    setStatus(`已导出 ${data.format.toUpperCase()}`);
   }, []);
 
-  const handleAutoSave = useCallback((data: EventAutoSave) => {
-    setXml(data.xml);
-  }, []);
+  const handleAutoSave = useCallback(
+    (data: EventAutoSave) => {
+      if (suppressAutoSaveRef.current) {
+        return;
+      }
+      updateActiveConversation((conversation) =>
+        conversation.diagramXml === data.xml
+          ? conversation
+          : { ...conversation, diagramXml: data.xml },
+      );
+    },
+    [updateActiveConversation],
+  );
 
-  const handleSaveLocal = useCallback(() => {
-    if (!xml) {
-      setStatus("图表尚未加载完成，无法保存");
+  const handleCreateConversation = useCallback(() => {
+    if (chatBusy) {
       return;
     }
-    window.localStorage.setItem(STORAGE_KEY, xml);
-    setStatus("已保存到浏览器 localStorage");
-  }, [xml]);
 
-  const handleLoadLocal = useCallback(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (!saved) {
-      setStatus("localStorage 中没有已保存的图表");
-      return;
-    }
+    const current = activeConversationRef.current;
+    const conversation = createBlankConversation(current?.agentId ?? "");
+    setConversations((previous) => [conversation, ...previous]);
+    setActiveConversationId(conversation.id);
     setPreview(null);
-    lastSyncedDiagramRef.current = null;
-    drawioRef.current?.load({ xml: saved });
-    setStatus("已从 localStorage 加载图表");
+  }, [chatBusy]);
+
+  const handleRenameConversation = useCallback(
+    (conversationId: string, nextTitle: string) => {
+      const title = nextTitle.replace(/\s+/g, " ").trim().slice(0, 30);
+      if (!title) {
+        return;
+      }
+
+      updateConversationById(conversationId, (conversation) => ({
+        ...conversation,
+        title,
+        isTitleCustom: true,
+      }));
+    },
+    [updateConversationById],
+  );
+
+  const handleSelectConversation = useCallback(
+    (conversationId: string) => {
+      if (chatBusy || conversationId === activeConversationId) {
+        return;
+      }
+
+      if (
+        !conversations.some(
+          (conversation) => conversation.id === conversationId,
+        )
+      ) {
+        return;
+      }
+
+      // 切换历史对话只改变当前选择，不刷新“最后修改时间”
+      setActiveConversationId(conversationId);
+      setPreview(null);
+    },
+    [activeConversationId, chatBusy, conversations],
+  );
+
+  const handleDeleteConversation = useCallback(
+    (conversationId: string) => {
+      if (chatBusy) {
+        return;
+      }
+
+      const target = conversations.find(
+        (conversation) => conversation.id === conversationId,
+      );
+      if (!target) {
+        return;
+      }
+
+      const remaining = conversations.filter(
+        (conversation) => conversation.id !== conversationId,
+      );
+
+      if (!remaining.length) {
+        const replacement = createBlankConversation(target.agentId);
+        setConversations([replacement]);
+        setActiveConversationId(replacement.id);
+        setPreview(null);
+        return;
+      }
+
+      setConversations(remaining);
+      if (conversationId === activeConversationId) {
+        setActiveConversationId(remaining[0].id);
+        setPreview(null);
+      }
+    },
+    [activeConversationId, chatBusy, conversations],
+  );
+
+  const handleChatBusyChange = useCallback((busy: boolean) => {
+    setChatBusy(busy);
   }, []);
 
-  const handleClear = useCallback(() => {
-    setPreview(null);
-    setXml("");
-    lastSyncedDiagramRef.current = null;
-    drawioRef.current?.load({ xml: "" });
-    setStatus("已清空画布");
-  }, []);
-
-  const isBusy = status.includes("正在");
+  if (!storeReady || !activeConversation) {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 text-muted">
+        <span className="flex size-12 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_12px_28px_-12px_rgba(37,99,235,0.9)]">
+          <DiagramIcon className="size-6" />
+        </span>
+        <p className="text-xs">正在加载历史对话…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-dvh flex-col text-foreground">
-      <header className="flex flex-wrap items-center gap-3 border-b border-line bg-surface/80 px-4 py-3 backdrop-blur-xl">
-        <div className="mr-auto flex min-w-0 items-center gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_10px_22px_-10px_rgba(37,99,235,0.85)]">
-            <DiagramIcon className="size-5" />
+      <header className="flex flex-wrap items-center gap-2 border-b border-line bg-surface/80 px-4 py-2 backdrop-blur-xl">
+        <div className="mr-auto flex min-w-0 items-center gap-2">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-brand-strong text-white shadow-[0_10px_22px_-10px_rgba(37,99,235,0.85)]">
+            <DiagramIcon className="size-4" />
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold tracking-tight text-foreground">
+            <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">
               Draw.io 编辑器
             </h1>
-            <p className="hidden text-[11px] text-muted sm:block">
+            <p className="hidden text-[10px] text-muted sm:block">
               AI 驱动的在线绘图工作台
             </p>
           </div>
@@ -259,7 +472,7 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
             className={primaryButtonClass}
             onClick={() => handleExport("xmlsvg")}
           >
-            <DownloadIcon className="size-4" />
+            <DownloadIcon className="size-3.5" />
             导出 SVG
           </button>
           <button
@@ -267,46 +480,21 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
             className={buttonClass}
             onClick={() => handleExport("png")}
           >
-            <DownloadIcon className="size-4" />
+            <DownloadIcon className="size-3.5" />
             导出 PNG
-          </button>
-          <span className="mx-1 hidden h-6 w-px bg-line sm:block" aria-hidden />
-          <button
-            type="button"
-            className={buttonClass}
-            onClick={handleSaveLocal}
-          >
-            <SaveIcon className="size-4" />
-            保存
-          </button>
-          <button
-            type="button"
-            className={buttonClass}
-            onClick={handleLoadLocal}
-          >
-            <FolderOpenIcon className="size-4" />
-            加载
-          </button>
-          <button
-            type="button"
-            className={dangerButtonClass}
-            onClick={handleClear}
-          >
-            <TrashIcon className="size-4" />
-            清空
           </button>
         </div>
 
-        <span className="hidden h-6 w-px bg-line sm:block" aria-hidden />
+        <span className="hidden h-5 w-px bg-line sm:block" aria-hidden />
         <div className="flex items-center gap-1.5">
           <span
-            className="flex max-w-44 items-center gap-2 rounded-lg border border-line bg-surface-muted px-2 py-1.5"
+            className="flex max-w-44 items-center gap-2 rounded-lg border border-line bg-surface-muted px-2 py-1"
             title={`当前用户：${userId}`}
           >
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand ring-1 ring-brand-border">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[10px] font-semibold text-brand ring-1 ring-brand-border">
               {userInitial}
             </span>
-            <span className="hidden max-w-28 truncate text-xs font-medium text-muted-strong sm:block">
+            <span className="hidden max-w-28 truncate text-[11px] font-medium text-muted-strong sm:block">
               {userId}
             </span>
           </span>
@@ -317,12 +505,49 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
             aria-label="退出登录"
             title="退出登录"
           >
-            <LogOutIcon />
+            <LogOutIcon className="size-3.5" />
           </button>
         </div>
       </header>
 
       <main className="relative flex min-h-0 flex-1 gap-3 p-3 sm:gap-4 sm:p-4">
+        {showConversationList ? (
+          <ConversationSidebar
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            disabled={chatBusy}
+            onSelect={handleSelectConversation}
+            onCreate={handleCreateConversation}
+            onDelete={handleDeleteConversation}
+            onRename={handleRenameConversation}
+            onCollapse={() => setShowConversationList(false)}
+          />
+        ) : (
+          <aside
+            aria-label="历史对话已收起"
+            className="panel hidden w-11 shrink-0 flex-col items-center gap-2 overflow-hidden rounded-xl px-1 py-2 xl:flex"
+          >
+            <button
+              type="button"
+              onClick={() => setShowConversationList(true)}
+              aria-label="展开历史对话"
+              title="展开历史对话"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <ChevronRightIcon className="size-4" />
+            </button>
+            <span className="flex size-7 items-center justify-center rounded-lg bg-brand-soft text-brand ring-1 ring-brand-border">
+              <ChatIcon className="size-3.5" />
+            </span>
+            <span className="[writing-mode:vertical-rl] select-none text-[10px] tracking-widest text-muted">
+              历史对话
+            </span>
+            <span className="mt-auto rounded-full bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold text-brand">
+              {conversations.length}
+            </span>
+          </aside>
+        )}
+
         <div className="panel relative min-w-0 flex-1 overflow-hidden rounded-xl">
           <DrawIoEmbed
             key={editorKey}
@@ -340,11 +565,6 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
             onLoad={handleDrawioLoad}
             onAutoSave={handleAutoSave}
             onExport={handleExported}
-            onClose={(data) =>
-              setStatus(
-                data.parentEvent === "save" ? "图表已保存" : "已退出编辑器",
-              )
-            }
           />
 
           {showLoadHelp && (
@@ -412,18 +632,14 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
           </aside>
         )}
 
-        <ChatPanel userId={userId} onDiagram={handleApplyDiagram} />
-      </main>
-
-      <footer className="flex items-center gap-2 border-t border-line bg-surface/80 px-4 py-2 text-xs text-muted backdrop-blur-xl">
-        <span
-          className={`size-1.5 shrink-0 rounded-full ${
-            isBusy ? "animate-pulse bg-brand" : "bg-success"
-          }`}
-          aria-hidden="true"
+        <ChatPanel
+          userId={userId}
+          conversation={activeConversation}
+          onUpdateConversation={updateActiveConversation}
+          onDiagram={handleApplyDiagram}
+          onBusyChange={handleChatBusyChange}
         />
-        <span className="truncate">{status}</span>
-      </footer>
+      </main>
     </div>
   );
 }

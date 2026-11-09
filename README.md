@@ -42,7 +42,25 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8091
 
 - `GET /query_ai_agent_config_list`：加载智能体列表
 - `POST /create_session`：首次发送消息时创建会话
-- `POST /chat`：发送消息并获取 draw.io XML，解析后渲染到左侧画布
+- `POST /chat`：返回 `data: { type, content }`
+  - `type=user`：内容作为对话提示展示，并自动聚焦输入框，等待用户补充信息
+  - `type=drawio`：`content` 为 draw.io XML，解析后渲染到左侧画布
+
+## 历史对话
+
+绘图页左侧提供历史对话列表，每条历史对话会一起保存：
+
+- 对话消息、SessionID、所选智能体
+- 该对话当前对应的 draw.io 画布 XML
+- 标题、消息数、更新时间
+
+数据按用户保存在浏览器 localStorage 中，键名形如：
+
+```text
+ai_agent_drawio.conversations.<userId>
+```
+
+新建对话、发送消息或切换历史对话后，最新使用的记录会移动到列表顶部；支持删除记录、重命名、收起/展开左侧列表，刷新后恢复对话和画布。
 
 ## Learn More
 

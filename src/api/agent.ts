@@ -183,7 +183,7 @@ export async function createSession(
   }
 }
 
-/** 同步对话；智能体返回完整内容 */
+/** 同步对话；返回 { type: "user" | "drawio", content } */
 export function chat(payload: ChatRequest): Promise<ChatResponse> {
   return request<ChatResponse>("/chat", {
     method: "POST",

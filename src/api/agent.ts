@@ -146,13 +146,24 @@ export async function fetchAgentConfigs(): Promise<AgentConfig[]> {
     return [];
   }
 
-  return data
-    .map((agent) => ({
-      agentId: String(agent?.agentId ?? ""),
-      agentName: agent?.agentName || `智能体 ${agent?.agentId ?? ""}`.trim(),
+  // 后端可能返回重复的智能体（相同 agentId），按 agentId 去重，
+  // 否则下拉框里会出现重复选项，React 也会报 duplicate key 警告。
+  const agentsById = new Map<string, AgentConfig>();
+
+  for (const agent of data) {
+    const agentId = String(agent?.agentId ?? "");
+    if (!agentId || agentsById.has(agentId)) {
+      continue;
+    }
+
+    agentsById.set(agentId, {
+      agentId,
+      agentName: agent?.agentName || `智能体 ${agentId}`,
       agentDesc: agent?.agentDesc ?? "",
-    }))
-    .filter((agent) => Boolean(agent.agentId));
+    });
+  }
+
+  return [...agentsById.values()];
 }
 
 /**

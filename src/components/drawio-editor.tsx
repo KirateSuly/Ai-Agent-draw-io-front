@@ -35,10 +35,16 @@ import {
 const DIAGRAM_VIEWBOX_PADDING = 24;
 
 /**
+ * iframe 超过该时长仍未完成 init 时，才展示「加载时间较长」提示。
+ * embed.diagrams.net 在部分网络下首包需要 10s 以上，阈值太短会误报。
+ */
+const DRAWIO_LOAD_HELP_DELAY = 30_000;
+
+/**
  * draw.io 官方嵌入地址。若所在网络无法访问 embed.diagrams.net，
  * 可自建 draw.io 服务并通过 NEXT_PUBLIC_DRAWIO_BASE_URL 指向它。
  */
-const DRAWIO_BASE_URL = process.env.NEXT_PUBLIC_DRAWIO_BASE_URL;
+const DRAWIO_BASE_URL = process.env.NEXT_PUBLIC_DRAWIO_BASE_URL || undefined;
 
 /**
  * draw.io 格式面板里的按钮（更改、编辑数据、清除默认风格等）没有显式设置字号，
@@ -266,7 +272,10 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
     if (isDrawioReady) {
       return;
     }
-    const timer = window.setTimeout(() => setShowLoadHelp(true), 12000);
+    const timer = window.setTimeout(
+      () => setShowLoadHelp(true),
+      DRAWIO_LOAD_HELP_DELAY,
+    );
     return () => window.clearTimeout(timer);
   }, [isDrawioReady, editorKey]);
 

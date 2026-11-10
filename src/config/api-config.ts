@@ -2,7 +2,7 @@
  * 前端接口配置
  * 通过 NEXT_PUBLIC_API_BASE_URL 指定后端地址；为空字符串表示与页面同源。
  */
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8091";
+const DEFAULT_API_BASE_URL = "http://122.51.85.195:8091";
 
 export const API_CONFIG = {
   baseUrl: (process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(

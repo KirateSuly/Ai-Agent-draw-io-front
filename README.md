@@ -30,6 +30,11 @@ NEXT_PUBLIC_DRAWIO_BASE_URL=https://your-drawio-host
 
 修改后需重启开发服务器。页面在加载超时后会显示提示和“重新加载”按钮。
 
+> **部署注意**：`embed.diagrams.net` 会拒绝 `Referer` 为公网 IP 的请求（返回 403）。
+> 因此通过 `http://<服务器IP>:3000` 访问时，draw.io 编辑器会加载失败。
+> 应用已在根布局设置 `referrer: "same-origin"`，跨域 iframe 不再携带 Referer，
+> 用 IP 访问也能正常加载；若在前面加了 Nginx，注意不要覆盖 `Referrer-Policy` 响应头。
+
 ## 后端 API
 
 前端默认请求 `http://127.0.0.1:8091/api/v1`，可通过环境变量指定后端根地址（末尾不要带斜杠）：

@@ -38,8 +38,7 @@ function extractFromText(content: string): string | null {
   return null;
 }
 
-export function extractDrawioXml(content: string): string | null {
-  const direct = extractFromText(content);
+export function extractDrawioXml(content: string): string | null {  const direct = extractFromText(content);
   if (direct) {
     return direct;
   }

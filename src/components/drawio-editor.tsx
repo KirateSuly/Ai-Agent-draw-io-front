@@ -35,6 +35,12 @@ import {
 const DIAGRAM_VIEWBOX_PADDING = 24;
 
 /**
+ * 程序化 load 后屏蔽自动保存的兜底时长。
+ * 正常情况由 draw.io 回传的 load 事件提前解除屏蔽，这里只防「某些版本不回报 load」。
+ */
+const PROGRAMMATIC_LOAD_SUPPRESS_MS = 1000;
+
+/**
  * iframe 超过该时长仍未完成 init 时，才展示「加载时间较长」提示。
  * embed.diagrams.net 在部分网络下首包需要 10s 以上，阈值太短会误报。
  */
@@ -97,12 +103,67 @@ type DrawioLoadPayload = {
 
 type DrawioLoadAction = (payload: DrawioLoadPayload) => void;
 
+/** draw.io 的 png 导出返回 data URL，转成 Blob 便于预览与下载；解析失败返回 null */
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  const match = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(dataUrl);
+  if (!match) {
+    return null;
+  }
+
+  const mimeType = match[1] || "application/octet-stream";
+  const payload = match[3] ?? "";
+
+  try {
+    if (match[2]) {
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new Blob([bytes], { type: mimeType });
+    }
+    return new Blob([decodeURIComponent(payload)], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
+
+/** 用对话标题生成安全的下载文件名 */
+function buildDownloadName(title: string, extension: string): string {
+  const normalized = title
+    .replace(/[\\/:*?"<>|\s]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return `${normalized || "drawio"}.${extension}`;
+}
+
 export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
   const drawioRef = useRef<DrawIoEmbedRef>(null);
   const drawioReadyRef = useRef(false);
   const activeConversationRef = useRef<ConversationBookmark | null>(null);
   const suppressAutoSaveRef = useRef(true);
   const suppressAutoSaveTimerRef = useRef<number | null>(null);
+
+  /** 导出预览的 Blob URL 与原始 Blob；URL 需要在替换和卸载时释放 */
+  const previewUrlRef = useRef<string | null>(null);
+  const previewBlobRef = useRef<Blob | null>(null);
+
+  /**
+   * 画布当前承载的是哪个对话的 XML。
+   * 切换对话时画布内容不会立刻替换，靠它判断自动保存该写回哪个对话，避免串数据。
+   */
+  const canvasConversationIdRef = useRef("");
+
+  /**
+   * react-drawio 只在挂载时注册一次 message 监听（useEffect 依赖为空数组），
+   * 闭包里的 onLoad / onAutoSave / onExport 会被永久冻结在首帧。
+   * 这里把最新一次渲染的处理函数放进 ref，让冻结的监听始终转发到当前处理器。
+   */
+  const drawioHandlersRef = useRef<{
+    onLoad: () => void;
+    onAutoSave: (data: EventAutoSave) => void;
+    onExport: (data: EventExport) => void;
+  } | null>(null);
 
   const [preview, setPreview] = useState<string | null>(null);
   const [previewFormat, setPreviewFormat] = useState<ExportFormat>("xmlsvg");
@@ -127,31 +188,40 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
     activeConversationRef.current = activeConversation;
   }, [activeConversation]);
 
-  const loadDiagram = useCallback((diagramXml: string) => {
-    const target = drawioRef.current;
-    if (!target) {
-      return false;
-    }
+  /**
+   * 把某个对话的 XML 载入画布。
+   * 载入前先记录画布归属，之后 draw.io 回传的 autosave 只会写回这个对话。
+   */
+  const loadDiagram = useCallback(
+    (conversationId: string, diagramXml: string) => {
+      const target = drawioRef.current;
+      if (!target || !conversationId) {
+        return false;
+      }
 
-    const viewBox = getDiagramViewBox(diagramXml);
-    const paddedViewBox = viewBox
-      ? {
-          x: viewBox.x - DIAGRAM_VIEWBOX_PADDING,
-          y: viewBox.y - DIAGRAM_VIEWBOX_PADDING,
-          width: viewBox.width + DIAGRAM_VIEWBOX_PADDING * 2,
-          height: viewBox.height + DIAGRAM_VIEWBOX_PADDING * 2,
-        }
-      : null;
+      canvasConversationIdRef.current = conversationId;
 
-    // react-drawio 未声明 draw.io load 动作的 viewbox/fit 参数，但会把额外字段原样转发。
-    (target.load as unknown as DrawioLoadAction)({
-      xml: diagramXml,
-      ...(paddedViewBox
-        ? { viewbox: paddedViewBox, border: 0 }
-        : { fit: 1, maxFitScale: 1 }),
-    });
-    return true;
-  }, []);
+      const viewBox = getDiagramViewBox(diagramXml);
+      const paddedViewBox = viewBox
+        ? {
+            x: viewBox.x - DIAGRAM_VIEWBOX_PADDING,
+            y: viewBox.y - DIAGRAM_VIEWBOX_PADDING,
+            width: viewBox.width + DIAGRAM_VIEWBOX_PADDING * 2,
+            height: viewBox.height + DIAGRAM_VIEWBOX_PADDING * 2,
+          }
+        : null;
+
+      // react-drawio 未声明 draw.io load 动作的 viewbox/fit 参数，但会把额外字段原样转发。
+      (target.load as unknown as DrawioLoadAction)({
+        xml: diagramXml,
+        ...(paddedViewBox
+          ? { viewbox: paddedViewBox, border: 0 }
+          : { fit: 1, maxFitScale: 1 }),
+      });
+      return true;
+    },
+    [],
+  );
 
   const updateConversationById = useCallback(
     (
@@ -208,7 +278,12 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
     [activeConversationId, updateConversationById],
   );
 
-  /** 程序化加载画布时，忽略 draw.io 回传的自动保存，避免误改“最后修改时间” */
+  /**
+   * 程序化加载画布时，忽略 draw.io 回传的自动保存，避免误改“最后修改时间”。
+   * draw.io 处理完 load 后会回一个 load 事件（见 handleDrawioLoad），
+   * 收到该事件即说明旧画布的回显已经过去，可以立刻恢复保存；
+   * 定时器只是兜底，防止某些版本不回报 load 事件。
+   */
   const markProgrammaticLoad = useCallback(() => {
     suppressAutoSaveRef.current = true;
     if (suppressAutoSaveTimerRef.current !== null) {
@@ -217,7 +292,7 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
     suppressAutoSaveTimerRef.current = window.setTimeout(() => {
       suppressAutoSaveRef.current = false;
       suppressAutoSaveTimerRef.current = null;
-    }, 1000);
+    }, PROGRAMMATIC_LOAD_SUPPRESS_MS);
   }, []);
 
   useEffect(() => {
@@ -292,7 +367,7 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
 
     const diagramXml = conversation.diagramXml || "";
     markProgrammaticLoad();
-    loadDiagram(diagramXml);
+    loadDiagram(conversation.id, diagramXml);
   }, [
     activeConversationId,
     isDrawioReady,
@@ -302,6 +377,13 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
   ]);
 
   const handleDrawioLoad = useCallback(() => {
+    // draw.io 已装载完新文档：此前排队的 autosave 都是旧画布的回显，此后恢复保存。
+    if (suppressAutoSaveTimerRef.current !== null) {
+      window.clearTimeout(suppressAutoSaveTimerRef.current);
+      suppressAutoSaveTimerRef.current = null;
+    }
+    suppressAutoSaveRef.current = false;
+
     drawioReadyRef.current = true;
     setIsDrawioReady(true);
     setShowLoadHelp(false);
@@ -309,6 +391,8 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
 
   const handleRetryLoad = useCallback(() => {
     drawioReadyRef.current = false;
+    // 编辑器即将重建，画布归属作废，重新就绪后由加载副作用重新写入
+    canvasConversationIdRef.current = "";
     setShowLoadHelp(false);
     setIsDrawioReady(false);
     setEditorKey((key) => key + 1);
@@ -316,6 +400,10 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
 
   const handleApplyDiagram = useCallback(
     (diagramXml: string) => {
+      if (!activeConversationId) {
+        return;
+      }
+
       updateActiveConversation((conversation) =>
         conversation.diagramXml === diagramXml
           ? conversation
@@ -324,10 +412,15 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
 
       if (drawioReadyRef.current) {
         markProgrammaticLoad();
-        loadDiagram(diagramXml);
+        loadDiagram(activeConversationId, diagramXml);
       }
     },
-    [loadDiagram, markProgrammaticLoad, updateActiveConversation],
+    [
+      activeConversationId,
+      loadDiagram,
+      markProgrammaticLoad,
+      updateActiveConversation,
+    ],
   );
 
   const handleLogout = useCallback(() => {
@@ -342,22 +435,88 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
     drawioRef.current?.exportDiagram({ format });
   }, []);
 
+  /**
+   * draw.io 的 xmlsvg 导出返回的是 SVG 源码（不是 data URL），直接塞进 <img src> 渲染不出来；
+   * 统一转成 Blob URL 供预览，同时保留 Blob 用于「下载」。
+   */
   const handleExported = useCallback((data: EventExport) => {
-    setPreview(data.data);
+    const raw = typeof data.data === "string" ? data.data.trim() : "";
+    if (!raw) {
+      return;
+    }
+
+    const isPng = data.format === "png" || data.format === "xmlpng";
+    const blob = raw.startsWith("data:")
+      ? dataUrlToBlob(raw)
+      : new Blob([raw], { type: "image/svg+xml" });
+
+    if (!blob) {
+      return;
+    }
+
+    setPreviewFormat(isPng ? "png" : "xmlsvg");
+    previewBlobRef.current = blob;
+
+    const nextUrl = URL.createObjectURL(blob);
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+    previewUrlRef.current = nextUrl;
+    setPreview(nextUrl);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  /** 把当前预览下载成本地文件：SVG 存为 .svg，PNG 存为 .png */
+  const handleDownloadPreview = useCallback(() => {
+    const blob = previewBlobRef.current;
+    if (!blob) {
+      return;
+    }
+
+    const extension = previewFormat === "png" ? "png" : "svg";
+    const title = activeConversationRef.current?.title ?? "drawio";
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = buildDownloadName(title, extension);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    // 下载是异步落盘的：过早 revoke 会让 Chrome 取消下载，这里留足时间再释放
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }, [previewFormat]);
 
   const handleAutoSave = useCallback(
     (data: EventAutoSave) => {
       if (suppressAutoSaveRef.current) {
         return;
       }
+
+      // 画布还停留在上一个对话（切换后的加载窗口）时丢弃，避免把 A 的图表写进 B。
+      if (
+        !activeConversationId ||
+        canvasConversationIdRef.current !== activeConversationId
+      ) {
+        return;
+      }
+
       updateActiveConversation((conversation) =>
         conversation.diagramXml === data.xml
           ? conversation
           : { ...conversation, diagramXml: data.xml },
       );
     },
-    [updateActiveConversation],
+    [activeConversationId, updateActiveConversation],
   );
 
   const handleCreateConversation = useCallback(() => {
@@ -446,6 +605,19 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
   const handleChatBusyChange = useCallback((busy: boolean) => {
     setChatBusy(busy);
   }, []);
+
+  /**
+   * 把最新一次渲染的处理函数同步给 iframe 监听。
+   * 必须放在所有回调定义之后：react-drawio 的监听只认挂载时的闭包，
+   * 这里每次渲染都刷新 ref，事件才能拿到当前的 activeConversationId。
+   */
+  useEffect(() => {
+    drawioHandlersRef.current = {
+      onLoad: handleDrawioLoad,
+      onAutoSave: handleAutoSave,
+      onExport: handleExported,
+    };
+  });
 
   if (!storeReady || !activeConversation) {
     return (
@@ -571,9 +743,9 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
               saveAndExit: false,
               lang: "zh",
             }}
-            onLoad={handleDrawioLoad}
-            onAutoSave={handleAutoSave}
-            onExport={handleExported}
+            onLoad={() => drawioHandlersRef.current?.onLoad()}
+            onAutoSave={(data) => drawioHandlersRef.current?.onAutoSave(data)}
+            onExport={(data) => drawioHandlersRef.current?.onExport(data)}
           />
 
           {showLoadHelp && (
@@ -622,13 +794,24 @@ export default function DrawIoEditor({ userId }: DrawIoEditorProps) {
                   {previewFormat === "png" ? "PNG" : "SVG"}
                 </span>
               </span>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-xs font-medium text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-                onClick={() => setPreview(null)}
-              >
-                关闭
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleDownloadPreview}
+                  title={`下载 ${previewFormat === "png" ? "PNG" : "SVG"} 文件`}
+                  className="inline-flex h-7 items-center gap-1 rounded-lg bg-brand-strong px-2.5 text-[11px] font-medium text-white shadow-[0_10px_22px_-12px_rgba(37,99,235,0.9)] transition-all hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                >
+                  <DownloadIcon className="size-3.5" />
+                  下载
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-muted transition-colors hover:bg-brand-soft hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                  onClick={() => setPreview(null)}
+                >
+                  关闭
+                </button>
+              </div>
             </div>
             <div className="thin-scrollbar flex flex-1 items-center justify-center overflow-auto bg-[repeating-conic-gradient(#eaf2fd_0%_25%,#ffffff_0%_50%)] bg-[length:16px_16px] p-3 dark:bg-none dark:bg-surface-muted">
               {/* eslint-disable-next-line @next/next/no-img-element */}
